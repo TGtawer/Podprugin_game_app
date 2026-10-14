@@ -4,7 +4,7 @@ const PLAYER_SPEED = 260;
 const ENEMY_SPEED = 60;
 const INVULNERABILITY_MS = 1000;
 const GAME_DURATION_SEC = 90;
-const UNIQUE_ENEMIES_AFTER_SEC = 15; // до этой секунды раунда спавнятся только слабые кружочки
+const UNIQUE_ENEMIES_AT_SCORE = 10; // вторая фаза: с этого количества очков спавнятся уникальные враги
 
 // Стамина и рывок
 const STAMINA_MAX = 100;
@@ -187,10 +187,6 @@ export class GameScene extends Phaser.Scene {
         if (this.gameOver || this.duel?.active || this.paused) return;
         this.timeLeft -= 1;
         this.timerText.setText(`Time: ${this.timeLeft}`);
-        if (!this.hordeAnnounced && this.timeLeft <= GAME_DURATION_SEC - UNIQUE_ENEMIES_AFTER_SEC) {
-          this.hordeAnnounced = true;
-          this.showHordaWarning();
-        }
         if (this.timeLeft <= 0) {
           this.endGame('Время вышло!');
         }
@@ -290,9 +286,8 @@ export class GameScene extends Phaser.Scene {
       y = Phaser.Math.Between(120, height);
     }
 
-    // До UNIQUE_ENEMIES_AFTER_SEC секунды раунда - только слабые красные кружочки
-    const elapsed = GAME_DURATION_SEC - this.timeLeft;
-    const uniquesAllowed = elapsed >= UNIQUE_ENEMIES_AFTER_SEC;
+    // До UNIQUE_ENEMIES_AT_SCORE очков - только слабые красные кружочки
+    const uniquesAllowed = this.score >= UNIQUE_ENEMIES_AT_SCORE;
     const roll = Phaser.Math.FloatBetween(0, 1);
     if (uniquesAllowed && roll < 0.2) {
       // Стрелок (жёлтый треугольник)
@@ -607,6 +602,11 @@ export class GameScene extends Phaser.Scene {
     // Очки только за победу над врагом
     this.score += 1;
     this.scoreText.setText(`Score: ${this.score}`);
+
+    if (!this.hordeAnnounced && this.score >= UNIQUE_ENEMIES_AT_SCORE) {
+      this.hordeAnnounced = true;
+      this.showHordaWarning();
+    }
 
     this.closeDuelUI();
     this.duel = null;
