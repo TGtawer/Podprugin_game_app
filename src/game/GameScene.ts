@@ -1,19 +1,38 @@
 import Phaser from 'phaser';
 
 const PLAYER_SPEED = 260;
-const ENEMY_SPEED = 90;
+const ENEMY_SPEED = 60;
 const INVULNERABILITY_MS = 1000;
 const GAME_DURATION_SEC = 60;
 
+// Стамина и рывок
+const STAMINA_MAX = 100;
+const STAMINA_REGEN_PER_SEC = 20;
+const DASH_COST = 30;
+const DASH_FORCE = 420;
+const DASH_COOLDOWN_MS = 300;
+const DASH_DURATION_MS = 150;
+
+// Стрелки
+const ARCHER_RANGE = 260;
+const ARCHER_SHOOT_COOLDOWN_MS = 1800;
+const PROJECTILE_SPEED = 300;
+const PROJECTILE_RADIUS = 6;
+
 // Дуэль
 const DUEL_TRIGGER_DISTANCE = 55;
-const DUEL_SEQUENCE_LENGTH = 5;      // сколько нажатий нужно сделать
-const DUEL_TIME_LIMIT_MS = 4000;     // сколько времени даётся
+const DUEL_SEQUENCE_LENGTH_SMALL = 2;  // обычный враг
+const DUEL_SEQUENCE_LENGTH_ELITE = 5;  // элитный враг
+const DUEL_SEQUENCE_LENGTH_ARCHER = 2; // стрелок (треугольник)
+const DUEL_TIME_LIMIT_MS = 4000;       // сколько времени даётся
+
+type EnemyType = 'small' | 'elite' | 'archer';
 
 type DuelState = {
   active: boolean;
-  enemy: Phaser.GameObjects.Arc;
-  sequence: ('A' | 'D')[];
+  enemy: Phaser.GameObjects.Shape;
+  enemyType: EnemyType;
+  sequence: ('Q' | 'E')[];
   index: number;
   startedAt: number;
   ui: Phaser.GameObjects.Container;
@@ -32,11 +51,34 @@ export class GameScene extends Phaser.Scene {
   private hp = 3;
   private invulnerableUntil = 0;
 
+  private staminaText!: Phaser.GameObjects.Text;
+  private stamina = STAMINA_MAX;
+  private lastStaminaTick = 0;
+  private lastDash = 0;
+  private dashUntil = 0;
+  private dashDirX = 0;
+  private dashDirY = 0;
+  private keyShift!: Phaser.Input.Keyboard.Key;
+  private keyQ!: Phaser.Input.Keyboard.Key;
+  private keyE!: Phaser.Input.Keyboard.Key;
+  private keySpace!: Phaser.Input.Keyboard.Key;
+  private restartKey!: Phaser.Input.Keyboard.Key;
+  private keyEsc!: Phaser.Input.Keyboard.Key;
+
+  private paused = false;
+  private pausedAt = 0;
+  private pauseLabel: Phaser.GameObjects.Text | null = null;
+
   private timerText!: Phaser.GameObjects.Text;
   private timeLeft = GAME_DURATION_SEC;
   private gameOver = false;
 
-  private enemies: Phaser.GameObjects.Arc[] = [];
+  private enemies: Phaser.GameObjects.Shape[] = [];
+  private enemyTypes = new WeakMap<Phaser.GameObjects.Shape, EnemyType>();
+  private enemyNextShot = new WeakMap<Phaser.GameObjects.Shape, number>();
+
+  private projectiles: Phaser.GameObjects.Shape[] = [];
+  private projectileVel = new WeakMap<Phaser.GameObjects.Shape, { x: number; y: number }>();
 
   private duel: DuelState | null = null;
   private keyA!: Phaser.Input.Keyboard.Key;
@@ -47,23 +89,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    // Сброс состояния при рестарте
+    this.score = 0;
+    this.hp = 3;
+    this.invulnerableUntil = 0;
+    this.stamina = STAMINA_MAX;
+    this.lastStaminaTick = 0;
+    this.lastDash = 0;
+    this.dashUntil = 0;
+    this.dashDirX = 0;
+    this.dashDirY = 0;
+    this.timeLeft = GAME_DURATION_SEC;
+    this.gameOver = false;
+    this.paused = false;
+    this.pauseLabel = null;
+    this.enemies = [];
+    this.projectiles = [];
+    this.duel = null;
+
     const { width, height } = this.scale;
-
-    this.add
-      .text(width / 2, 28, 'GAME DEV STARTER', {
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: '28px',
-        color: '#ffffff',
-      })
-      .setOrigin(0.5, 0);
-
-    this.add
-      .text(width / 2, 68, 'Стрелки / WASD — движение. Побеждай врагов в дуэлях!', {
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
-        color: '#cbd5e1',
-      })
-      .setOrigin(0.5, 0);
 
     this.player = this.add.rectangle(width / 2, height / 2, 42, 42, 0x38bdf8);
 
@@ -77,6 +121,17 @@ export class GameScene extends Phaser.Scene {
       fontFamily: 'system-ui, sans-serif',
       fontSize: '22px',
       color: '#f87171',
+    });
+
+    this.staminaText = this.add.text(24, height - 112, `Stamina: ${Math.floor(this.stamina)}`, {
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '22px',
+      color: '#38bdf8',
+    });
+    this.add.text(24, height - 144, 'Space - рывок', {
+      fontFamily: 'system-ui, sans-serif',
+      fontSize: '16px',
+      color: '#cbd5e1',
     });
 
     this.timerText = this.add
@@ -101,10 +156,18 @@ export class GameScene extends Phaser.Scene {
 
     this.keyA = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
     this.keyD = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    this.keyShift = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
+    this.keyQ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+    this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this.keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.restartKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    this.keyEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
     // A и D в дуэли не должны двигать игрока
-    this.keyA.on('down', () => this.handleDuelInput('A'));
-    this.keyD.on('down', () => this.handleDuelInput('D'));
+    this.keyA.on('down', () => {});
+    this.keyD.on('down', () => {});
+    this.keyQ.on('down', () => this.handleDuelInput('Q'));
+    this.keyE.on('down', () => this.handleDuelInput('E'));
 
     this.time.addEvent({
       delay: 1500,
@@ -118,7 +181,7 @@ export class GameScene extends Phaser.Scene {
       delay: 1000,
       loop: true,
       callback: () => {
-        if (this.gameOver || this.duel?.active) return;
+        if (this.gameOver || this.duel?.active || this.paused) return;
         this.timeLeft -= 1;
         this.timerText.setText(`Time: ${this.timeLeft}`);
         if (this.timeLeft <= 0) {
@@ -129,15 +192,33 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (this.gameOver) return;
+    if (this.gameOver) {
+      if (Phaser.Input.Keyboard.JustDown(this.restartKey)) {
+        this.scene.restart();
+      }
+      return;
+    }
 
-    // Во время дуэли мир "замирает"
+    if (Phaser.Input.Keyboard.JustDown(this.keyEsc)) {
+      this.togglePause(_time);
+    }
+    if (this.paused) return;
+
+    // Восстановление стамины
+    if (_time - this.lastStaminaTick > 100) {
+      this.lastStaminaTick = _time;
+      this.stamina = Math.min(STAMINA_MAX, this.stamina + STAMINA_REGEN_PER_SEC * 0.1);
+      this.staminaText.setText(`Stamina: ${Math.floor(this.stamina)}`);
+    }
+
+    // Время дуэли - заморозка
     if (this.duel?.active) {
       this.updateDuelTimer();
       return;
     }
 
     const seconds = delta / 1000;
+    const dashPressed = Phaser.Input.Keyboard.JustDown(this.keySpace);
     let dx = 0;
     let dy = 0;
 
@@ -148,19 +229,40 @@ export class GameScene extends Phaser.Scene {
 
     if (dx !== 0 || dy !== 0) {
       const length = Math.hypot(dx, dy);
-      this.player.x += (dx / length) * PLAYER_SPEED * seconds;
-      this.player.y += (dy / length) * PLAYER_SPEED * seconds;
+      const ndx = dx / length;
+      const ndy = dy / length;
+      this.player.x += ndx * PLAYER_SPEED * seconds;
+      this.player.y += ndy * PLAYER_SPEED * seconds;
+
+      if (dashPressed &&
+          _time - this.lastDash >= DASH_COOLDOWN_MS &&
+          _time >= this.dashUntil &&
+          this.stamina >= DASH_COST) {
+        this.lastDash = _time;
+        this.dashUntil = _time + DASH_DURATION_MS;
+        this.dashDirX = ndx;
+        this.dashDirY = ndy;
+        this.stamina -= DASH_COST;
+        this.staminaText.setText(`Stamina: ${Math.floor(this.stamina)}`);
+      }
+    }
+
+    // Рывок: короткий мощный рывок в выбранном направлении
+    if (_time < this.dashUntil) {
+      this.player.x += this.dashDirX * DASH_FORCE * seconds;
+      this.player.y += this.dashDirY * DASH_FORCE * seconds;
     }
 
     this.keepPlayerOnScreen();
     this.updateEnemies(seconds);
+    this.updateProjectiles(seconds);
     this.checkDuelTrigger();
   }
 
   // ---------- Враги ----------
 
   private spawnEnemy(): void {
-    if (this.gameOver || this.duel?.active) return;
+    if (this.gameOver || this.duel?.active || this.paused) return;
 
     const { width, height } = this.scale;
     const side = Phaser.Math.Between(0, 3);
@@ -181,8 +283,25 @@ export class GameScene extends Phaser.Scene {
       y = Phaser.Math.Between(120, height);
     }
 
-    const enemy = this.add.circle(x, y, 16, 0xef4444);
-    this.enemies.push(enemy);
+    // Вес спавна: стрелки ~30%, элитные ~20%, мелкие ~50%
+    const roll = Phaser.Math.FloatBetween(0, 1);
+    if (roll < 0.3) {
+      // Стрелок (жёлтый треугольник)
+      const enemy = this.add.triangle(x, y, 0, -20, -16, 20, 16, 20, 0xfacc15);
+      this.enemies.push(enemy as unknown as Phaser.GameObjects.Shape);
+      this.enemyTypes.set(enemy as unknown as Phaser.GameObjects.Shape, 'archer');
+      this.enemyNextShot.set(enemy as unknown as Phaser.GameObjects.Shape, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
+    } else if (roll < 0.5) {
+      // Элитный
+      const enemy = this.add.circle(x, y, 24, 0x991b1b);
+      this.enemies.push(enemy);
+      this.enemyTypes.set(enemy, 'elite');
+    } else {
+      // Обычный
+      const enemy = this.add.circle(x, y, 16, 0xef4444);
+      this.enemies.push(enemy);
+      this.enemyTypes.set(enemy, 'small');
+    }
   }
 
   private updateEnemies(seconds: number): void {
@@ -193,9 +312,103 @@ export class GameScene extends Phaser.Scene {
         this.player.x,
         this.player.y,
       );
-      enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
-      enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
+      const type = this.enemyTypes.get(enemy);
+
+      if (type === 'archer') {
+        const distance = Phaser.Math.Distance.Between(
+          enemy.x, enemy.y, this.player.x, this.player.y,
+        );
+        // Держит дистанцию: подходит издалека, отходит вблизи
+        if (distance > ARCHER_RANGE + 40) {
+          enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
+          enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
+        } else if (distance < ARCHER_RANGE - 40) {
+          enemy.x -= Math.cos(angle) * ENEMY_SPEED * seconds;
+          enemy.y -= Math.sin(angle) * ENEMY_SPEED * seconds;
+        }
+
+        const nextShot = this.enemyNextShot.get(enemy) ?? 0;
+        if (this.time.now >= nextShot && distance <= ARCHER_RANGE * 1.5) {
+          this.enemyNextShot.set(enemy, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
+          this.fireProjectile(enemy, angle);
+        }
+      } else {
+        enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
+        enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
+      }
     });
+  }
+
+  private fireProjectile(enemy: Phaser.GameObjects.Shape, angle: number): void {
+    const projectile = this.add.circle(
+      enemy.x,
+      enemy.y,
+      PROJECTILE_RADIUS,
+      0xfacc15,
+    );
+    this.projectiles.push(projectile);
+    this.projectileVel.set(projectile, {
+      x: Math.cos(angle) * PROJECTILE_SPEED,
+      y: Math.sin(angle) * PROJECTILE_SPEED,
+    });
+  }
+
+  private updateProjectiles(seconds: number): void {
+    const { width, height } = this.scale;
+    const playerRadius = this.player.width / 2;
+
+    this.projectiles = this.projectiles.filter((projectile) => {
+      const vel = this.projectileVel.get(projectile);
+      if (!vel) return false;
+
+      projectile.x += vel.x * seconds;
+      projectile.y += vel.y * seconds;
+
+      if (projectile.x < -20 || projectile.x > width + 20 ||
+          projectile.y < -20 || projectile.y > height + 20) {
+        projectile.destroy();
+        return false;
+      }
+
+      const distance = Phaser.Math.Distance.Between(
+        projectile.x, projectile.y, this.player.x, this.player.y,
+      );
+      if (distance < playerRadius + PROJECTILE_RADIUS) {
+        projectile.destroy();
+        if (this.time.now >= this.invulnerableUntil) {
+          this.damagePlayer();
+        }
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  private togglePause(now: number): void {
+    this.paused = !this.paused;
+
+    if (this.paused) {
+      this.pausedAt = now;
+      this.pauseLabel = this.add
+        .text(this.scale.width / 2, this.scale.height / 2, 'Пауза\nESC - продолжить', {
+          fontFamily: 'system-ui, sans-serif',
+          fontSize: '32px',
+          color: '#ffffff',
+          align: 'center',
+          backgroundColor: '#000000aa',
+          padding: { x: 24, y: 12 },
+        })
+        .setOrigin(0.5)
+        .setDepth(150);
+    } else {
+      this.pauseLabel?.destroy();
+      this.pauseLabel = null;
+      // Продлеваем таймер дуэли на время паузы
+      if (this.duel) {
+        this.duel.startedAt += now - this.pausedAt;
+      }
+    }
   }
 
   // ---------- Триггер дуэли ----------
@@ -218,11 +431,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private startDuel(enemy: Phaser.GameObjects.Arc): void {
-    // Генерируем случайную комбинацию A/D
-    const sequence: ('A' | 'D')[] = [];
-    for (let i = 0; i < DUEL_SEQUENCE_LENGTH; i++) {
-      sequence.push(Phaser.Math.Between(0, 1) === 0 ? 'A' : 'D');
+  private startDuel(enemy: Phaser.GameObjects.Shape): void {
+    const type = this.enemyTypes.get(enemy) ?? 'small';
+    let seqLen = DUEL_SEQUENCE_LENGTH_SMALL;
+    if (type === 'elite') seqLen = DUEL_SEQUENCE_LENGTH_ELITE;
+    if (type === 'archer') seqLen = DUEL_SEQUENCE_LENGTH_ARCHER;
+    const sequence: ('Q' | 'E')[] = [];
+    for (let i = 0; i < seqLen; i++) {
+      sequence.push(Phaser.Math.Between(0, 1) === 0 ? 'Q' : 'E');
     }
 
     const ui = this.buildDuelUI(sequence);
@@ -230,6 +446,7 @@ export class GameScene extends Phaser.Scene {
     this.duel = {
       active: true,
       enemy,
+      enemyType: type,
       sequence,
       index: 0,
       startedAt: this.time.now,
@@ -238,7 +455,7 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private buildDuelUI(sequence: ('A' | 'D')[]): Phaser.GameObjects.Container {
+  private buildDuelUI(sequence: ('Q' | 'E')[]): Phaser.GameObjects.Container {
     const { width, height } = this.scale;
     const cx = width / 2;
     const cy = height / 2;
@@ -264,7 +481,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(102);
 
     const hint = this.add
-      .text(cx, cy - 50, 'Нажимай A и D в правильном порядке!', {
+      .text(cx, cy - 50, 'Нажимай Q и E в правильном порядке!', {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '18px',
         color: '#cbd5e1',
@@ -321,7 +538,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private handleDuelInput(key: 'A' | 'D'): void {
+  private handleDuelInput(key: 'Q' | 'E'): void {
     if (!this.duel?.active || this.gameOver) return;
 
     const expected = this.duel.sequence[this.duel.index];
@@ -438,6 +655,15 @@ export class GameScene extends Phaser.Scene {
         fontFamily: 'system-ui, sans-serif',
         fontSize: '28px',
         color: '#facc15',
+      })
+      .setOrigin(0.5)
+      .setDepth(200);
+
+    this.add
+      .text(width / 2, height / 2 + 110, 'Нажми R - рестарт', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '20px',
+        color: '#cbd5e1',
       })
       .setOrigin(0.5)
       .setDepth(200);
