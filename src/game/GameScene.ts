@@ -3,7 +3,8 @@ import Phaser from 'phaser';
 const PLAYER_SPEED = 260;
 const ENEMY_SPEED = 60;
 const INVULNERABILITY_MS = 1000;
-const GAME_DURATION_SEC = 60;
+const GAME_DURATION_SEC = 90;
+const UNIQUE_ENEMIES_AFTER_SEC = 15; // до этой секунды раунда спавнятся только слабые кружочки
 
 // Стамина и рывок
 const STAMINA_MAX = 100;
@@ -72,6 +73,7 @@ export class GameScene extends Phaser.Scene {
   private timerText!: Phaser.GameObjects.Text;
   private timeLeft = GAME_DURATION_SEC;
   private gameOver = false;
+  private hordeAnnounced = false;
 
   private enemies: Phaser.GameObjects.Shape[] = [];
   private enemyTypes = new WeakMap<Phaser.GameObjects.Shape, EnemyType>();
@@ -106,6 +108,7 @@ export class GameScene extends Phaser.Scene {
     this.enemies = [];
     this.projectiles = [];
     this.duel = null;
+    this.hordeAnnounced = false;
 
     const { width, height } = this.scale;
 
@@ -184,6 +187,10 @@ export class GameScene extends Phaser.Scene {
         if (this.gameOver || this.duel?.active || this.paused) return;
         this.timeLeft -= 1;
         this.timerText.setText(`Time: ${this.timeLeft}`);
+        if (!this.hordeAnnounced && this.timeLeft <= GAME_DURATION_SEC - UNIQUE_ENEMIES_AFTER_SEC) {
+          this.hordeAnnounced = true;
+          this.showHordaWarning();
+        }
         if (this.timeLeft <= 0) {
           this.endGame('Время вышло!');
         }
@@ -283,15 +290,17 @@ export class GameScene extends Phaser.Scene {
       y = Phaser.Math.Between(120, height);
     }
 
-    // Вес спавна: стрелки ~30%, элитные ~20%, мелкие ~50%
+    // До UNIQUE_ENEMIES_AFTER_SEC секунды раунда - только слабые красные кружочки
+    const elapsed = GAME_DURATION_SEC - this.timeLeft;
+    const uniquesAllowed = elapsed >= UNIQUE_ENEMIES_AFTER_SEC;
     const roll = Phaser.Math.FloatBetween(0, 1);
-    if (roll < 0.3) {
+    if (uniquesAllowed && roll < 0.2) {
       // Стрелок (жёлтый треугольник)
       const enemy = this.add.triangle(x, y, 0, -20, -16, 20, 16, 20, 0xfacc15);
       this.enemies.push(enemy as unknown as Phaser.GameObjects.Shape);
       this.enemyTypes.set(enemy as unknown as Phaser.GameObjects.Shape, 'archer');
       this.enemyNextShot.set(enemy as unknown as Phaser.GameObjects.Shape, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
-    } else if (roll < 0.5) {
+    } else if (uniquesAllowed && roll < 0.7) {
       // Элитный
       const enemy = this.add.circle(x, y, 24, 0x991b1b);
       this.enemies.push(enemy);
@@ -319,16 +328,19 @@ export class GameScene extends Phaser.Scene {
           enemy.x, enemy.y, this.player.x, this.player.y,
         );
         // Держит дистанцию: подходит издалека, отходит вблизи
+        let isRetreating = false;
         if (distance > ARCHER_RANGE + 40) {
           enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
           enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
         } else if (distance < ARCHER_RANGE - 40) {
           enemy.x -= Math.cos(angle) * ENEMY_SPEED * seconds;
           enemy.y -= Math.sin(angle) * ENEMY_SPEED * seconds;
+          isRetreating = true;
         }
 
+        // Стреляет только когда не убегает
         const nextShot = this.enemyNextShot.get(enemy) ?? 0;
-        if (this.time.now >= nextShot && distance <= ARCHER_RANGE * 1.5) {
+        if (!isRetreating && this.time.now >= nextShot && distance <= ARCHER_RANGE * 1.5) {
           this.enemyNextShot.set(enemy, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
           this.fireProjectile(enemy, angle);
         }
@@ -385,6 +397,27 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private showHordaWarning(): void {
+    const label = this.add
+      .text(this.scale.width / 2, 160, 'Орда на подходе!', {
+        fontFamily: 'system-ui, sans-serif',
+        fontSize: '32px',
+        color: '#facc15',
+        backgroundColor: '#000000aa',
+        padding: { x: 20, y: 10 },
+      })
+      .setOrigin(0.5)
+      .setDepth(180);
+
+    this.tweens.add({
+      targets: label,
+      alpha: 0,
+      delay: 1800,
+      duration: 700,
+      onComplete: () => label.destroy(),
+    });
+  }
+
   private togglePause(now: number): void {
     this.paused = !this.paused;
 
@@ -415,7 +448,7 @@ export class GameScene extends Phaser.Scene {
 
   private checkDuelTrigger(): void {
     if (this.duel?.active) return;
-    if (this.time.now < this.invulnerableUntil) return;
+    //if (this.time.now < this.invulnerableUntil) return;
 
     for (const enemy of this.enemies) {
       const distance = Phaser.Math.Distance.Between(
