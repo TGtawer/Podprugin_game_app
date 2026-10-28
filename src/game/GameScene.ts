@@ -1,31 +1,32 @@
 import Phaser from 'phaser';
-
-const PLAYER_SPEED = 260;
-const ENEMY_SPEED = 60;
-const INVULNERABILITY_MS = 1000;
-const GAME_DURATION_SEC = 90;
-const UNIQUE_ENEMIES_AT_SCORE = 10; // вторая фаза: с этого количества очков спавнятся уникальные враги
-
-// Стамина и рывок
-const STAMINA_MAX = 100;
-const STAMINA_REGEN_PER_SEC = 20;
-const DASH_COST = 30;
-const DASH_FORCE = 420;
-const DASH_COOLDOWN_MS = 300;
-const DASH_DURATION_MS = 150;
-
-// Стрелки
-const ARCHER_RANGE = 260;
-const ARCHER_SHOOT_COOLDOWN_MS = 1800;
-const PROJECTILE_SPEED = 300;
-const PROJECTILE_RADIUS = 6;
-
-// Дуэль
-const DUEL_TRIGGER_DISTANCE = 55;
-const DUEL_SEQUENCE_LENGTH_SMALL = 2;  // обычный враг
-const DUEL_SEQUENCE_LENGTH_ELITE = 5;  // элитный враг
-const DUEL_SEQUENCE_LENGTH_ARCHER = 2; // стрелок (треугольник)
-const DUEL_TIME_LIMIT_MS = 4000;       // сколько времени даётся
+import {
+  PLAYER_SPEED,
+  START_HP,
+  GAME_DURATION_SEC,
+  ROUND_TICK_MS,
+  UNIQUE_ENEMIES_AT_SCORE,
+  STAMINA_MAX,
+  STAMINA_REGEN_PER_SEC,
+  DASH_COST,
+  DASH_FORCE,
+  DASH_COOLDOWN_MS,
+  DASH_DURATION_MS,
+  ENEMY_SPEED,
+  SPAWN_INTERVAL_MS,
+  INVULNERABILITY_MS,
+  ARCHER_SPAWN_ROLL_MAX,
+  ELITE_SPAWN_ROLL_MAX,
+  ARCHER_RANGE,
+  ARCHER_SHOOT_COOLDOWN_MS,
+  PROJECTILE_SPEED,
+  PROJECTILE_RADIUS,
+  DUEL_TRIGGER_DISTANCE,
+  DUEL_SEQUENCE_LENGTH_SMALL,
+  DUEL_SEQUENCE_LENGTH_ELITE,
+  DUEL_SEQUENCE_LENGTH_ARCHER,
+  DUEL_TIME_LIMIT_MS,
+  DUEL_KNOCKBACK,
+} from './config';
 
 type EnemyType = 'small' | 'elite' | 'archer';
 
@@ -49,7 +50,7 @@ export class GameScene extends Phaser.Scene {
   private score = 0;
 
   private hpText!: Phaser.GameObjects.Text;
-  private hp = 3;
+  private hp = START_HP;
   private invulnerableUntil = 0;
 
   private staminaText!: Phaser.GameObjects.Text;
@@ -93,7 +94,7 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     // Сброс состояния при рестарте
     this.score = 0;
-    this.hp = 3;
+    this.hp = START_HP;
     this.invulnerableUntil = 0;
     this.stamina = STAMINA_MAX;
     this.lastStaminaTick = 0;
@@ -173,7 +174,7 @@ export class GameScene extends Phaser.Scene {
     this.keyE.on('down', () => this.handleDuelInput('E'));
 
     this.time.addEvent({
-      delay: 1500,
+      delay: SPAWN_INTERVAL_MS,
       loop: true,
       callback: () => this.spawnEnemy(),
     });
@@ -181,7 +182,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnEnemy();
 
     this.time.addEvent({
-      delay: 1000,
+      delay: ROUND_TICK_MS,
       loop: true,
       callback: () => {
         if (this.gameOver || this.duel?.active || this.paused) return;
@@ -289,13 +290,13 @@ export class GameScene extends Phaser.Scene {
     // До UNIQUE_ENEMIES_AT_SCORE очков - только слабые красные кружочки
     const uniquesAllowed = this.score >= UNIQUE_ENEMIES_AT_SCORE;
     const roll = Phaser.Math.FloatBetween(0, 1);
-    if (uniquesAllowed && roll < 0.2) {
+    if (uniquesAllowed && roll < ARCHER_SPAWN_ROLL_MAX) {
       // Стрелок (жёлтый треугольник)
       const enemy = this.add.triangle(x, y, 0, -20, -16, 20, 16, 20, 0xfacc15);
       this.enemies.push(enemy as unknown as Phaser.GameObjects.Shape);
       this.enemyTypes.set(enemy as unknown as Phaser.GameObjects.Shape, 'archer');
       this.enemyNextShot.set(enemy as unknown as Phaser.GameObjects.Shape, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
-    } else if (uniquesAllowed && roll < 0.7) {
+    } else if (uniquesAllowed && roll < ELITE_SPAWN_ROLL_MAX) {
       // Элитный
       const enemy = this.add.circle(x, y, 24, 0x991b1b);
       this.enemies.push(enemy);
@@ -627,8 +628,8 @@ export class GameScene extends Phaser.Scene {
       enemy.x,
       enemy.y,
     );
-    enemy.x += Math.cos(angle) * 140;
-    enemy.y += Math.sin(angle) * 140;
+    enemy.x += Math.cos(angle) * DUEL_KNOCKBACK;
+    enemy.y += Math.sin(angle) * DUEL_KNOCKBACK;
 
     this.damagePlayer();
   }
