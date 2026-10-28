@@ -25,6 +25,10 @@ import {
   DUEL_SEQUENCE_LENGTH_ELITE,
   DUEL_SEQUENCE_LENGTH_ARCHER,
   DUEL_TIME_LIMIT_MS,
+  DUEL_TIME_SCALE_MIN,
+  DUEL_TIME_SCALE_FREEZE,
+  DUEL_TIME_SCALE_RADIUS,
+  DUEL_TIME_SCALE_STOP,
   DUEL_KNOCKBACK,
 } from './config';
 
@@ -36,9 +40,10 @@ type DuelState = {
   enemyType: EnemyType;
   sequence: ('Q' | 'E')[];
   index: number;
-  startedAt: number;
+  elapsedMs: number;
   ui: Phaser.GameObjects.Container;
   timeBar: Phaser.GameObjects.Rectangle;
+  timeBarFullWidth: number;
 };
 
 export class GameScene extends Phaser.Scene {
@@ -68,11 +73,11 @@ export class GameScene extends Phaser.Scene {
   private keyEsc!: Phaser.Input.Keyboard.Key;
 
   private paused = false;
-  private pausedAt = 0;
   private pauseLabel: Phaser.GameObjects.Text | null = null;
 
   private timerText!: Phaser.GameObjects.Text;
   private timeLeft = GAME_DURATION_SEC;
+  private roundElapsedMs = 0;
   private gameOver = false;
   private hordeAnnounced = false;
 
@@ -103,6 +108,7 @@ export class GameScene extends Phaser.Scene {
     this.dashDirX = 0;
     this.dashDirY = 0;
     this.timeLeft = GAME_DURATION_SEC;
+    this.roundElapsedMs = 0;
     this.gameOver = false;
     this.paused = false;
     this.pauseLabel = null;
@@ -180,19 +186,6 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.spawnEnemy();
-
-    this.time.addEvent({
-      delay: ROUND_TICK_MS,
-      loop: true,
-      callback: () => {
-        if (this.gameOver || this.duel?.active || this.paused) return;
-        this.timeLeft -= 1;
-        this.timerText.setText(`Time: ${this.timeLeft}`);
-        if (this.timeLeft <= 0) {
-          this.endGame('Время вышло!');
-        }
-      },
-    });
   }
 
   update(_time: number, delta: number): void {
@@ -204,9 +197,25 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.keyEsc)) {
-      this.togglePause(_time);
+      this.togglePause();
     }
-    if (this.paused) return;
+    if (this.paused) {
+      return;
+    }
+
+    // Обратный отсчёт раунда идёт по реальному времени (не замедляется в дуэли)
+    if (!this.duel?.active) {
+      this.roundElapsedMs += delta;
+      if (this.roundElapsedMs >= ROUND_TICK_MS) {
+        this.roundElapsedMs -= ROUND_TICK_MS;
+        this.timeLeft -= 1;
+        this.timerText.setText(`Time: ${this.timeLeft}`);
+        if (this.timeLeft <= 0) {
+          this.endGame('Время вышло!');
+          return;
+        }
+      }
+    }
 
     // Восстановление стамины
     if (_time - this.lastStaminaTick > 100) {
@@ -215,12 +224,17 @@ export class GameScene extends Phaser.Scene {
       this.staminaText.setText(`Stamina: ${Math.floor(this.stamina)}`);
     }
 
-    // Время дуэли - заморозка
+    // Время дуэли: мир вокруг героя замирает тем сильнее, чем ближе объект
     if (this.duel?.active) {
-      this.updateDuelTimer();
+      this.duel.ui.setPosition(this.duel.enemy.x, this.duel.enemy.y - 80);
+
+      const seconds = delta / 1000;
+      this.updateEnemies(seconds, this.duel.enemy);
+      this.updateProjectiles(seconds);
+
+      this.updateDuelTimer(seconds);
       return;
     }
-
     const seconds = delta / 1000;
     const dashPressed = Phaser.Input.Keyboard.JustDown(this.keySpace);
     let dx = 0;
@@ -309,8 +323,13 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private updateEnemies(seconds: number): void {
+  private updateEnemies(seconds: number, duelEnemy?: Phaser.GameObjects.Shape): void {
     this.enemies.forEach((enemy) => {
+      if (enemy === duelEnemy) return;
+
+      // Каждый враг движется со своей скоростью времени: чем ближе к герою, тем медленнее
+      const enemySeconds = seconds * this.worldTimeScaleAt(enemy.x, enemy.y);
+
       const angle = Phaser.Math.Angle.Between(
         enemy.x,
         enemy.y,
@@ -326,23 +345,23 @@ export class GameScene extends Phaser.Scene {
         // Держит дистанцию: подходит издалека, отходит вблизи
         let isRetreating = false;
         if (distance > ARCHER_RANGE + 40) {
-          enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
-          enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
+          enemy.x += Math.cos(angle) * ENEMY_SPEED * enemySeconds;
+          enemy.y += Math.sin(angle) * ENEMY_SPEED * enemySeconds;
         } else if (distance < ARCHER_RANGE - 40) {
-          enemy.x -= Math.cos(angle) * ENEMY_SPEED * seconds;
-          enemy.y -= Math.sin(angle) * ENEMY_SPEED * seconds;
+          enemy.x -= Math.cos(angle) * ENEMY_SPEED * enemySeconds;
+          enemy.y -= Math.sin(angle) * ENEMY_SPEED * enemySeconds;
           isRetreating = true;
         }
 
-        // Стреляет только когда не убегает
+        // Стреляет только когда не убегает и нет дуэли
         const nextShot = this.enemyNextShot.get(enemy) ?? 0;
-        if (!isRetreating && this.time.now >= nextShot && distance <= ARCHER_RANGE * 1.5) {
+        if (!duelEnemy && !isRetreating && this.time.now >= nextShot && distance <= ARCHER_RANGE * 1.5) {
           this.enemyNextShot.set(enemy, this.time.now + ARCHER_SHOOT_COOLDOWN_MS);
           this.fireProjectile(enemy, angle);
         }
       } else {
-        enemy.x += Math.cos(angle) * ENEMY_SPEED * seconds;
-        enemy.y += Math.sin(angle) * ENEMY_SPEED * seconds;
+        enemy.x += Math.cos(angle) * ENEMY_SPEED * enemySeconds;
+        enemy.y += Math.sin(angle) * ENEMY_SPEED * enemySeconds;
       }
     });
   }
@@ -369,8 +388,9 @@ export class GameScene extends Phaser.Scene {
       const vel = this.projectileVel.get(projectile);
       if (!vel) return false;
 
-      projectile.x += vel.x * seconds;
-      projectile.y += vel.y * seconds;
+      const projectileSeconds = seconds * this.worldTimeScaleAt(projectile.x, projectile.y);
+      projectile.x += vel.x * projectileSeconds;
+      projectile.y += vel.y * projectileSeconds;
 
       if (projectile.x < -20 || projectile.x > width + 20 ||
           projectile.y < -20 || projectile.y > height + 20) {
@@ -414,11 +434,10 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private togglePause(now: number): void {
+  private togglePause(): void {
     this.paused = !this.paused;
 
     if (this.paused) {
-      this.pausedAt = now;
       this.pauseLabel = this.add
         .text(this.scale.width / 2, this.scale.height / 2, 'Пауза\nESC - продолжить', {
           fontFamily: 'system-ui, sans-serif',
@@ -433,10 +452,6 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.pauseLabel?.destroy();
       this.pauseLabel = null;
-      // Продлеваем таймер дуэли на время паузы
-      if (this.duel) {
-        this.duel.startedAt += now - this.pausedAt;
-      }
     }
   }
 
@@ -470,7 +485,8 @@ export class GameScene extends Phaser.Scene {
       sequence.push(Phaser.Math.Between(0, 1) === 0 ? 'Q' : 'E');
     }
 
-    const ui = this.buildDuelUI(sequence);
+    const ui = this.buildDuelUI(enemy, sequence);
+    const timeBar = ui.getByName('timeBar') as Phaser.GameObjects.Rectangle;
 
     this.duel = {
       active: true,
@@ -478,75 +494,53 @@ export class GameScene extends Phaser.Scene {
       enemyType: type,
       sequence,
       index: 0,
-      startedAt: this.time.now,
+      elapsedMs: 0,
       ui,
-      timeBar: ui.getByName('timeBar') as Phaser.GameObjects.Rectangle,
+      timeBar,
+      timeBarFullWidth: timeBar.width,
     };
   }
 
-  private buildDuelUI(sequence: ('Q' | 'E')[]): Phaser.GameObjects.Container {
-    const { width, height } = this.scale;
-    const cx = width / 2;
-    const cy = height / 2;
+  private buildDuelUI(enemy: Phaser.GameObjects.Shape, sequence: ('Q' | 'E')[]): Phaser.GameObjects.Container {
+    const keySize = 56;
+    const keyGap = 70;
+    const barWidth = sequence.length * keyGap;
 
-    // Затемнение
-    const overlay = this.add
-      .rectangle(cx, cy, width, height, 0x000000, 0.55)
-      .setDepth(100);
-
-    // Панель
-    const panel = this.add
-      .rectangle(cx, cy, 520, 240, 0x0f172a, 0.95)
-      .setStrokeStyle(2, 0x38bdf8)
-      .setDepth(101);
+    // Панель висит над врагом
+    const container = this.add.container(enemy.x, enemy.y - 80).setDepth(120);
 
     const title = this.add
-      .text(cx, cy - 90, 'ДУЭЛЬ!', {
+      .text(0, -50, 'ДУЭЛЬ!', {
         fontFamily: 'system-ui, sans-serif',
-        fontSize: '32px',
+        fontSize: '22px',
         color: '#facc15',
       })
-      .setOrigin(0.5)
-      .setDepth(102);
-
-    const hint = this.add
-      .text(cx, cy - 50, 'Нажимай Q и E в правильном порядке!', {
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: '18px',
-        color: '#cbd5e1',
-      })
-      .setOrigin(0.5)
-      .setDepth(102);
+      .setOrigin(0.5);
 
     // Полоса времени
     const barBg = this.add
-      .rectangle(cx, cy + 80, 440, 16, 0x1e293b)
-      .setDepth(102);
+      .rectangle(0, 30, barWidth, 10, 0x1e293b)
+      .setOrigin(0.5, 0.5);
     const timeBar = this.add
-      .rectangle(cx - 220, cy + 80, 440, 16, 0x38bdf8)
-      .setOrigin(0, 0.5)
-      .setDepth(103);
+      .rectangle(-barWidth / 2, 30, barWidth, 10, 0x38bdf8)
+      .setOrigin(0, 0.5);
     timeBar.setName('timeBar');
 
-    // Кнопки-индикаторы
-    const container = this.add.container(0, 0).setDepth(102);
-    container.add([overlay, panel, title, hint, barBg, timeBar]);
+    container.add([title, barBg, timeBar]);
 
-    const startX = cx - ((sequence.length - 1) * 70) / 2;
+    const startX = -((sequence.length - 1) * keyGap) / 2;
     sequence.forEach((key, i) => {
       const keyBg = this.add
-        .rectangle(startX + i * 70, cy, 56, 56, 0x1e293b)
+        .rectangle(startX + i * keyGap, 0, keySize, keySize, 0x1e293b)
         .setStrokeStyle(2, 0x64748b)
-        .setName(`key-${i}`)
-        .setDepth(102);
+        .setName(`key-${i}`);
       const keyText = this.add
-        .text(startX + i * 70, cy, key, {
+        .text(startX + i * keyGap, 0, key, {
           fontFamily: 'system-ui, sans-serif',
           fontSize: '28px',
           color: '#e2e8f0',
         })
-        .setOrigin(0.5)
-        .setDepth(103);
+        .setOrigin(0.5);
 
       container.add([keyBg, keyText]);
     });
@@ -554,13 +548,30 @@ export class GameScene extends Phaser.Scene {
     return container;
   }
 
-  private updateDuelTimer(): void {
+  // Масштаб времени вокруг героя: вдали почти стоп, вблизи - полная остановка
+  // Работает только во время дуэли; вне дуэли время не замедляется
+  private worldTimeScaleAt(x: number, y: number): number {
+    if (!this.duel?.active) return 1;
+
+    const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, x, y);
+
+    if (distance <= DUEL_TIME_SCALE_STOP) return DUEL_TIME_SCALE_FREEZE;
+
+    const t = Phaser.Math.Clamp(
+      (distance - DUEL_TIME_SCALE_STOP) / (DUEL_TIME_SCALE_RADIUS - DUEL_TIME_SCALE_STOP),
+      0,
+      1,
+    );
+    return Phaser.Math.Linear(DUEL_TIME_SCALE_FREEZE, DUEL_TIME_SCALE_MIN, t);
+  }
+
+  private updateDuelTimer(seconds: number): void {
     if (!this.duel) return;
 
-    const elapsed = this.time.now - this.duel.startedAt;
-    const remaining = Math.max(0, 1 - elapsed / DUEL_TIME_LIMIT_MS);
+    this.duel.elapsedMs += seconds * 1000;
+    const remaining = Math.max(0, 1 - this.duel.elapsedMs / DUEL_TIME_LIMIT_MS);
 
-    this.duel.timeBar.width = 440 * remaining;
+    this.duel.timeBar.width = this.duel.timeBarFullWidth * remaining;
 
     if (remaining <= 0) {
       this.failDuel();

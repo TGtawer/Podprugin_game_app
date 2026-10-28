@@ -41,6 +41,10 @@ export const DUEL_SEQUENCE_LENGTH_SMALL = 2; // длина серии у обы�
 export const DUEL_SEQUENCE_LENGTH_ELITE = 5; // длина серии у элитного врага
 export const DUEL_SEQUENCE_LENGTH_ARCHER = 2; // длина серии у стрелка
 export const DUEL_TIME_LIMIT_MS = 4000; // время на выполнение серии
+export const DUEL_TIME_SCALE_MIN = 0.15; // замедление мира вдали от героя во время дуэли
+export const DUEL_TIME_SCALE_FREEZE = 0; // замедление у самого героя во время дуэли (полная остановка)
+export const DUEL_TIME_SCALE_RADIUS = 140; // радиус вокруг героя, где время замирает постепенно
+export const DUEL_TIME_SCALE_STOP = 30; // ближе этого расстояния время полностью стоит
 export const DUEL_KNOCKBACK = 140; // на сколько px отталкивается враг при проигранной дуэли
 
 // ---------- Конфиг Phaser ----------
