@@ -502,8 +502,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildDuelUI(enemy: Phaser.GameObjects.Shape, sequence: ('Q' | 'E')[]): Phaser.GameObjects.Container {
-    const keySize = 56;
-    const keyGap = 70;
+    const keySize = 40;
+    const keyGap = 52;
     const barWidth = sequence.length * keyGap;
 
     // Панель висит над врагом
@@ -537,7 +537,7 @@ export class GameScene extends Phaser.Scene {
       const keyText = this.add
         .text(startX + i * keyGap, 0, key, {
           fontFamily: 'system-ui, sans-serif',
-          fontSize: '28px',
+          fontSize: '20px',
           color: '#e2e8f0',
         })
         .setOrigin(0.5);
