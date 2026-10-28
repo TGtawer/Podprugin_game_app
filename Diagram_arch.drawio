@@ -1,0 +1,31 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Страница-1" id="wDzXwXN9sshbwrJ0PovH">
+    <mxGraphModel dx="733" dy="533" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="a8vcJAENj9459-A72RoY-3" edge="1" parent="1" source="a8vcJAENj9459-A72RoY-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;" target="a8vcJAENj9459-A72RoY-2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Input" vertex="1">
+          <mxGeometry height="30" width="90" x="300" y="394" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Player" vertex="1">
+          <mxGeometry height="30" width="90" x="470" y="394" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Config" vertex="1">
+          <mxGeometry height="30" width="90" x="300" y="554" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-10" edge="1" parent="1" source="a8vcJAENj9459-A72RoY-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;defaultLabelBackgroundColor=page;" target="a8vcJAENj9459-A72RoY-9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="GameScene" vertex="1">
+          <mxGeometry height="30" width="90" x="300" y="484" as="geometry" />
+        </mxCell>
+        <mxCell id="a8vcJAENj9459-A72RoY-9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;roundedPerimeter=1;" value="Ui" vertex="1">
+          <mxGeometry height="30" width="90" x="470" y="484" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
